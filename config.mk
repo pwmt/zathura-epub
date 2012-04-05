@@ -14,10 +14,16 @@ LIBDIR ?= ${PREFIX}/lib
 CAIRO_INC ?= $(shell pkg-config --cflags cairo)
 CAIRO_LIB ?= $(shell pkg-config --libs cairo)
 
+GTK_INC ?= $(shell pkg-config --cflags gtk+-3.0)
+GTK_LIB ?= $(shell pkg-config --libs   gtk+-3.0)
+
+WEBKIT_INC ?= $(shell pkg-config --cflags webkitgtk-3.0)
+WEBKIT_LIB ?= $(shell pkg-config --libs   webkitgtk-3.0)
+
 ZATHURA_INC ?= $(shell pkg-config --cflags zathura)
 
-INCS = ${GIRARA_INC} ${ZATHURA_INC}
-LIBS = ${GIRARA_LIB} 
+INCS = ${GIRARA_INC} ${GTK_INC} ${WEBKIT_INC} ${ZATHURA_INC}
+LIBS = ${GIRARA_LIB} ${GTK_LIB} ${WEBKIT_LIB}
 
 # plugindir
 PLUGINDIR ?= $(shell pkg-config --variable=plugindir zathura)
