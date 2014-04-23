@@ -97,7 +97,7 @@ epub_document_open(zathura_document_t* document)
   g_free(tmp_filename);
 
   /* kill calling process */
-  raise(SIGKILL);
+  raise(SIGTERM);
 
   return ZATHURA_ERROR_UNKNOWN;
 }
