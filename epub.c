@@ -1,28 +1,34 @@
 /* See LICENSE file for license and copyright information */
 
-#include <gtk/gtk.h>
-#include <webkit/webkit.h>
 #include <stdlib.h>
+#include <signal.h>
+#include <glib.h>
 
 #include "epub.h"
 
-struct epub_page_s {
-  GtkWidget* web_view;
-  GtkWidget* window;
-  GdkPixbuf* pixbuf;
-};
+static void
+randomize_string(char* dest, size_t length)
+{
+  char charset[] = "0123456789";
 
-static gboolean cb_load_error(WebKitWebView* web_view, WebKitWebFrame* web_frame, epub_page_t* epub_page);
-static gboolean cb_load_finished(WebKitWebView* web_view, WebKitWebFrame* web_frame, epub_page_t* epub_page);
+  for (int i = 0; i < length; i++) {
+    size_t index = (double) rand() / RAND_MAX * (sizeof charset - 1);
+    dest[i] = charset[index];
+  }
+}
+
+static char*
+create_tmp_filename() {
+  char* tmp_filename = g_strdup("/tmp/tmp-XXXXXX.pdf");
+  randomize_string(tmp_filename + 9, 6);
+
+  return tmp_filename;
+}
 
 void
 register_functions(zathura_plugin_functions_t* functions)
 {
-  functions->document_open     = epub_document_open;
-  functions->document_free     = epub_document_free;
-  functions->page_init         = epub_page_init;
-  functions->page_clear        = epub_page_clear;
-  functions->page_render_cairo = epub_page_render_cairo;
+  functions->document_open = epub_document_open;
 }
 
 ZATHURA_PLUGIN_REGISTER(
@@ -37,97 +43,61 @@ ZATHURA_PLUGIN_REGISTER(
 zathura_error_t
 epub_document_open(zathura_document_t* document)
 {
-  zathura_document_set_data(document, NULL);
-  zathura_document_set_number_of_pages(document, 1);
-
-  return ZATHURA_ERROR_OK;
-}
-
-zathura_error_t
-epub_document_free(zathura_document_t* document, void* data)
-{
-  return ZATHURA_ERROR_OK;
-}
-
-zathura_error_t
-epub_page_init(zathura_page_t* page)
-{
-  /* init page */
-  epub_page_t* epub_page = calloc(1, sizeof(epub_page_t));
-  if (epub_page == NULL) {
+  if (document == NULL) {
     return ZATHURA_ERROR_UNKNOWN;
   }
 
-  /* init window and web view */
-  epub_page->window = gtk_offscreen_window_new();
-  epub_page->web_view = webkit_web_view_new();
+  const char* path = zathura_document_get_path(document);
 
-  g_signal_connect(epub_page->web_view, "load-error",    G_CALLBACK(cb_load_error),    epub_page);
-  g_signal_connect(epub_page->web_view, "load-finished", G_CALLBACK(cb_load_finished), epub_page);
-
-  gtk_container_add(GTK_CONTAINER(epub_page->window), epub_page->web_view);
-  gtk_widget_show_all(epub_page->window);
-
-  /* load page.. */
-  webkit_web_view_load_uri(WEBKIT_WEB_VIEW(epub_page->web_view), "http://orf.at");
-  gtk_main();
-
-  if (epub_page->pixbuf == NULL) {
-    epub_page_clear(page, epub_page);
+  if (path == NULL) {
     return ZATHURA_ERROR_UNKNOWN;
   }
 
-  /* set zathura page */
-  zathura_page_set_data(page, epub_page);
+  /* create temporary file */
+  char* tmp_filename = create_tmp_filename();
 
-  zathura_page_set_width(page,  gdk_pixbuf_get_width(epub_page->pixbuf));
-  zathura_page_set_height(page, gdk_pixbuf_get_height(epub_page->pixbuf));
+  /* convert epub to pdf */
+  char* argv_convert[] = {
+    "ebook-convert",
+    (char*) path,
+    tmp_filename,
+    "--enable-heuristics",
+    NULL
+  };
 
-  return ZATHURA_ERROR_OK;
-}
+  gint exit_status = 0;
 
-zathura_error_t
-epub_page_clear(zathura_page_t* page, epub_page_t* epub_page)
-{
-  if (epub_page != NULL) {
-    free(epub_page);
-  }
+  g_spawn_sync(
+      NULL,
+      argv_convert,
+      NULL,
+      G_SPAWN_SEARCH_PATH,
+      NULL,
+      NULL,
+      NULL,
+      NULL,
+      &exit_status,
+      NULL);
 
-  return ZATHURA_ERROR_OK;
-}
-
-#if HAVE_CAIRO
-zathura_error_t
-epub_page_render_cairo(zathura_page_t* page, epub_page_t* epub_page,
-    cairo_t* cairo, bool printing)
-{
-  if (epub_page == NULL || epub_page->pixbuf == NULL || cairo == NULL) {
+  if (exit_status != 0) {
+    g_free(tmp_filename);
     return ZATHURA_ERROR_UNKNOWN;
   }
 
-  gdk_cairo_set_source_pixbuf(cairo, epub_page->pixbuf, 0, 0);
-  cairo_paint(cairo);
+  /* create new instance of zathura */
+  char* argv_zathura[] = {
+    "zathura",
+    tmp_filename,
+    NULL
+  };
 
-  return ZATHURA_ERROR_OK;
-}
-#endif
+  g_spawn_async(NULL, argv_zathura, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
 
-static gboolean
-cb_load_error(WebKitWebView* web_view, WebKitWebFrame* web_frame, epub_page_t* epub_page)
-{
-  gtk_main_quit();
+  /* cleanup */
+  g_free(tmp_filename);
 
-  return TRUE;
-}
+  /* kill calling process */
+  raise(SIGKILL);
 
-static gboolean
-cb_load_finished(WebKitWebView* web_view, WebKitWebFrame* web_frame, epub_page_t* epub_page)
-{
-  if (epub_page != NULL && epub_page->window != NULL) {
-    epub_page->pixbuf = gtk_offscreen_window_get_pixbuf(GTK_OFFSCREEN_WINDOW(epub_page->window));
-  }
-
-  gtk_main_quit();
-
-  return TRUE;
+  return ZATHURA_ERROR_UNKNOWN;
 }
